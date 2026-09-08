@@ -11,7 +11,6 @@ const DIRS = {
 const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
-const GHOST_SPEED = 0.1;    // 1/10 celda/frame
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
@@ -37,11 +36,13 @@ function createGame() {
       speed: PACMAN_SPEED,
     },
     ghosts: GHOST_STARTS.map( ( g ) => ( {
+      id: g.id,
+      kind: g.kind,
+      color: g.color,
       x: g.x,
       y: g.y,
       dir: 'up',
-      speed: GHOST_SPEED,
-      kind: g.kind,
+      speed: g.speed,
     } ) ),
   };
 }
@@ -110,52 +111,115 @@ function movePacman( game ) {
   wrapTunnel( p, width );
 }
 
+function getGhostTargetTile( game, ghost ) {
+  const pacman = game.pacman;
+  const px = Math.round( pacman.x );
+  const py = Math.round( pacman.y );
+  const pDir = DIRS[ pacman.dir ] || { x: 0, y: 0 };
+
+  switch ( ghost.kind ) {
+    case 'hunter':
+      return { x: px, y: py };
+
+    case 'ambusher':
+      return {
+        x: px + pDir.x * 4,
+        y: py + pDir.y * 4,
+      };
+
+    case 'flanker': {
+      const blinky = game.ghosts.find( ( g ) => g.kind === 'hunter' ) || ghost;
+      const aheadX = px + pDir.x * 2;
+      const aheadY = py + pDir.y * 2;
+      const bx = Math.round( blinky.x );
+      const by = Math.round( blinky.y );
+      return {
+        x: 2 * aheadX - bx,
+        y: 2 * aheadY - by,
+      };
+    }
+
+    case 'shy': {
+      const dist = Math.abs( ghost.x - pacman.x ) + Math.abs( ghost.y - pacman.y );
+      if ( dist > 8 ) {
+        return { x: px, y: py };
+      }
+      return { x: 0, y: 30 };
+    }
+
+    default:
+      return { x: px, y: py };
+  }
+}
+
 function decideGhost( game, g ) {
   const grid = game.grid;
-  const p = game.pacman;
+  const target = getGhostTargetTile( game, g );
+  const gx = Math.round( g.x );
+  const gy = Math.round( g.y );
 
   const options = Object.keys( DIRS ).filter(
-    ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
+    ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, gx, gy, dir, 'ghost' )
   );
   // Sin salida (callejon): permitir el giro de 180.
-  const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
+  const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
-      }
+  let best = choices[ 0 ];
+  let bestDist = Infinity;
+  for ( const dir of choices ) {
+    const d = DIRS[ dir ];
+    const nx = gx + d.x;
+    const ny = gy + d.y;
+    const dist = Math.abs( nx - target.x ) + Math.abs( ny - target.y );
+    if ( dist < bestDist ) {
+      bestDist = dist;
+      best = dir;
     }
-    g.dir = best;
-  } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
   }
+  g.dir = best;
 }
 
 function moveGhost( game, g ) {
   const grid = game.grid;
   const width = grid[ 0 ].length;
+  let remaining = g.speed;
 
-  if ( aligned( g.x ) && aligned( g.y ) ) {
-    g.x = Math.round( g.x );
-    g.y = Math.round( g.y );
-    decideGhost( game, g );
-    if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
+  while ( remaining > 0 ) {
+    const d = DIRS[ g.dir ];
+    let distToNextTile;
+    let nextTile;
+
+    if ( d.x !== 0 ) {
+      nextTile = d.x > 0 ? Math.floor( g.x + 1 ) : Math.ceil( g.x - 1 );
+      distToNextTile = Math.abs( nextTile - g.x );
+    } else {
+      nextTile = d.y > 0 ? Math.floor( g.y + 1 ) : Math.ceil( g.y - 1 );
+      distToNextTile = Math.abs( nextTile - g.y );
+    }
+
+    if ( distToNextTile <= remaining + 1e-5 ) {
+      if ( d.x !== 0 ) {
+        g.x = nextTile;
+        g.y = Math.round( g.y );
+      } else {
+        g.y = nextTile;
+        g.x = Math.round( g.x );
+      }
+      wrapTunnel( g, width );
+      remaining = Math.max( 0, remaining - distToNextTile );
+
+      decideGhost( game, g );
+
+      if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) {
+        break;
+      }
+    } else {
+      g.x += d.x * remaining;
+      g.y += d.y * remaining;
+      wrapTunnel( g, width );
+      remaining = 0;
+    }
   }
-
-  const d = DIRS[ g.dir ];
-  g.x += d.x * g.speed;
-  g.y += d.y * g.speed;
-  wrapTunnel( g, width );
 }
 
 function resetPositions( game ) {
@@ -165,9 +229,11 @@ function resetPositions( game ) {
   p.dir = 'left';
   p.nextDir = null;
   game.ghosts.forEach( ( g, i ) => {
-    g.x = GHOST_STARTS[ i ].x;
-    g.y = GHOST_STARTS[ i ].y;
+    const start = GHOST_STARTS[ i ];
+    g.x = start.x;
+    g.y = start.y;
     g.dir = 'up';
+    g.speed = start.speed;
   } );
 }
 
@@ -197,3 +263,4 @@ function update( game ) {
 window.createGame = createGame;
 window.update = update;
 window.DIRS = DIRS;
+window.getGhostTargetTile = getGhostTargetTile;
