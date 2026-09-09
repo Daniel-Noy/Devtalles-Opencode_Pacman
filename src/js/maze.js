@@ -52,10 +52,10 @@ const MAZE = MAZE_STR.map( ( row ) => row.split( '' ).map( parseTile ) );
 const TUNNEL_ROW = 14;
 const PACMAN_START = { x: 13, y: 23 };
 const GHOST_STARTS = [
-  { id: 'blinky', color: '#ff0000', kind: 'hunter',   x: 13, y: 14, speed: 0.11 },
-  { id: 'pinky',  color: '#ffb8ff', kind: 'ambusher', x: 14, y: 14, speed: 0.095 },
-  { id: 'inky',   color: '#00ffff', kind: 'flanker',  x: 12, y: 14, speed: 0.095 },
-  { id: 'clyde',  color: '#ffb852', kind: 'shy',      x: 15, y: 14, speed: 0.095 },
+  { id: 'blinky', color: '#ff0000', kind: 'hunter',   x: 13, y: 14, speed: 0.11,  releaseTimer: 0 },
+  { id: 'pinky',  color: '#ffb8ff', kind: 'ambusher', x: 14, y: 14, speed: 0.095, releaseTimer: 120 }, // ~2s a 60fps
+  { id: 'inky',   color: '#00ffff', kind: 'flanker',  x: 12, y: 14, speed: 0.095, releaseTimer: 240 }, // ~4s
+  { id: 'clyde',  color: '#ffb852', kind: 'shy',      x: 15, y: 14, speed: 0.095, releaseTimer: 360 }, // ~6s
 ];
 
 window.MAZE = MAZE;

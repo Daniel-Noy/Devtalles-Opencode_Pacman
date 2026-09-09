@@ -43,6 +43,8 @@ function createGame() {
       y: g.y,
       dir: 'up',
       speed: g.speed,
+      state: g.releaseTimer === 0 ? 'exiting' : 'waiting',
+      timer: g.releaseTimer,
     } ) ),
   };
 }
@@ -53,13 +55,16 @@ function aligned( v ) {
 
 // Una celda es muro para el actor dado?
 //   pacman: bloqueado por pared (1) y puerta (3)
-//   ghost:  bloqueado solo por pared (1)
-function isWall( grid, x, y, actor ) {
+//   ghost:  bloqueado por pared (1), y por puerta (3) si no es hacia arriba
+function isWall( grid, x, y, actor, dir ) {
   if ( y < 0 || y >= grid.length ) return true;
   if ( x < 0 || x >= grid[ 0 ].length ) return true;
   const v = grid[ y ][ x ];
   if ( v === 1 ) return true;
-  if ( v === 3 && actor === 'pacman' ) return true;
+  if ( v === 3 ) {
+    if ( actor === 'pacman' ) return true;
+    if ( dir !== 'up' ) return true;
+  }
   return false;
 }
 
@@ -71,7 +76,7 @@ function canMove( grid, x, y, dir, actor ) {
   const ty = y + d.y;
   // Tunel: salir por un borde en la fila del tunel siempre es valido.
   if ( ty === TUNNEL_ROW && ( tx < 0 || tx >= grid[ 0 ].length ) ) return true;
-  return !isWall( grid, tx, ty, actor );
+  return !isWall( grid, tx, ty, actor, dir );
 }
 
 function wrapTunnel( a, width ) {
@@ -179,7 +184,69 @@ function decideGhost( game, g ) {
   g.dir = best;
 }
 
+function moveWaitingGhost( g ) {
+  g.timer--;
+  if ( g.timer <= 0 ) {
+    g.state = 'exiting';
+    return;
+  }
+
+  const speed = g.speed * 0.5;
+  if ( g.dir === 'up' ) {
+    g.y -= speed;
+    if ( g.y <= 13.5 ) {
+      g.y = 13.5;
+      g.dir = 'down';
+    }
+  } else {
+    g.y += speed;
+    if ( g.y >= 14.5 ) {
+      g.y = 14.5;
+      g.dir = 'up';
+    }
+  }
+}
+
+function moveExitingGhost( game, g ) {
+  const targetX = g.x <= 13.5 ? 13 : 14;
+
+  if ( Math.abs( g.x - targetX ) > 1e-3 ) {
+    if ( Math.abs( g.y - 14 ) > 1e-3 ) {
+      const dy = 14 - g.y;
+      const stepY = Math.sign( dy ) * Math.min( g.speed, Math.abs( dy ) );
+      g.y += stepY;
+      g.dir = stepY > 0 ? 'down' : 'up';
+      return;
+    }
+    g.y = 14;
+    const dx = targetX - g.x;
+    const stepX = Math.sign( dx ) * Math.min( g.speed, Math.abs( dx ) );
+    g.x += stepX;
+    g.dir = stepX > 0 ? 'right' : 'left';
+    return;
+  }
+
+  g.x = targetX;
+  g.dir = 'up';
+  g.y -= g.speed;
+
+  if ( g.y <= 11 ) {
+    g.y = 11;
+    g.state = 'active';
+    decideGhost( game, g );
+  }
+}
+
 function moveGhost( game, g ) {
+  if ( g.state === 'waiting' ) {
+    moveWaitingGhost( g );
+    return;
+  }
+  if ( g.state === 'exiting' ) {
+    moveExitingGhost( game, g );
+    return;
+  }
+
   const grid = game.grid;
   const width = grid[ 0 ].length;
   let remaining = g.speed;
@@ -234,6 +301,8 @@ function resetPositions( game ) {
     g.y = start.y;
     g.dir = 'up';
     g.speed = start.speed;
+    g.state = start.releaseTimer === 0 ? 'exiting' : 'waiting';
+    g.timer = start.releaseTimer;
   } );
 }
 
