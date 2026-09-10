@@ -20,13 +20,15 @@ function createGame() {
   grid[ PACMAN_START.y ][ PACMAN_START.x ] = 0;
 
   let dots = 0;
-  for ( const row of grid ) for ( const v of row ) if ( v === 2 ) dots++;
+  for ( const row of grid ) for ( const v of row ) if ( v === 2 || v === 4 ) dots++;
 
   return {
     state: 'start',
     score: 0,
     lives: 3,
     dotsRemaining: dots,
+    frightenedTimer: 0,
+    ghostsEatenStreak: 0,
     grid,
     pacman: {
       x: PACMAN_START.x,
@@ -43,6 +45,7 @@ function createGame() {
       y: g.y,
       dir: 'up',
       speed: g.speed,
+      baseSpeed: g.speed,
       state: g.releaseTimer === 0 ? 'exiting' : 'waiting',
       timer: g.releaseTimer,
     } ) ),
@@ -63,6 +66,7 @@ function isWall( grid, x, y, actor, dir ) {
   if ( v === 1 ) return true;
   if ( v === 3 ) {
     if ( actor === 'pacman' ) return true;
+    if ( actor === 'ghost_eaten' && dir === 'down' ) return false;
     if ( dir !== 'up' ) return true;
   }
   return false;
@@ -100,11 +104,27 @@ function movePacman( game ) {
       p.dir = p.nextDir;
       p.nextDir = null;
     }
-    // Comer dot.
+    // Comer dot o power pellet.
     if ( grid[ p.y ][ p.x ] === 2 ) {
       grid[ p.y ][ p.x ] = 0;
       game.score += 10;
       game.dotsRemaining--;
+    } else if ( grid[ p.y ][ p.x ] === 4 ) {
+      grid[ p.y ][ p.x ] = 0;
+      game.score += 50;
+      game.dotsRemaining--;
+      game.frightenedTimer = 360;
+      game.ghostsEatenStreak = 0;
+      for ( const g of game.ghosts ) {
+        if ( g.state === 'active' || g.state === 'frightened' ) {
+          g.state = 'frightened';
+          g.speed = g.baseSpeed * 0.5;
+          const opp = OPPOSITE[ g.dir ];
+          if ( opp && canMove( grid, Math.round( g.x ), Math.round( g.y ), opp, 'ghost' ) ) {
+            g.dir = opp;
+          }
+        }
+      }
     }
     // Si no puede seguir, se detiene en la celda.
     if ( !canMove( grid, p.x, p.y, p.dir, 'pacman' ) ) return;
@@ -117,6 +137,10 @@ function movePacman( game ) {
 }
 
 function getGhostTargetTile( game, ghost ) {
+  if ( ghost.state === 'eaten' ) {
+    return { x: 13, y: 14 };
+  }
+
   const pacman = game.pacman;
   const px = Math.round( pacman.x );
   const py = Math.round( pacman.y );
@@ -159,16 +183,23 @@ function getGhostTargetTile( game, ghost ) {
 
 function decideGhost( game, g ) {
   const grid = game.grid;
-  const target = getGhostTargetTile( game, g );
+  const actor = g.state === 'eaten' ? 'ghost_eaten' : 'ghost';
   const gx = Math.round( g.x );
   const gy = Math.round( g.y );
 
   const options = Object.keys( DIRS ).filter(
-    ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, gx, gy, dir, 'ghost' )
+    ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, gx, gy, dir, actor )
   );
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
 
+  if ( g.state === 'frightened' ) {
+    const randomIndex = Math.floor( Math.random() * choices.length );
+    g.dir = choices[ randomIndex ];
+    return;
+  }
+
+  const target = getGhostTargetTile( game, g );
   let best = choices[ 0 ];
   let bestDist = Infinity;
   for ( const dir of choices ) {
@@ -247,6 +278,7 @@ function moveGhost( game, g ) {
     return;
   }
 
+  const actor = g.state === 'eaten' ? 'ghost_eaten' : 'ghost';
   const grid = game.grid;
   const width = grid[ 0 ].length;
   let remaining = g.speed;
@@ -275,21 +307,40 @@ function moveGhost( game, g ) {
       wrapTunnel( g, width );
       remaining = Math.max( 0, remaining - distToNextTile );
 
+      if ( g.state === 'eaten' && g.y >= 14 && g.x >= 12 && g.x <= 15 ) {
+        g.y = 14;
+        g.x = Math.round( g.x );
+        g.state = 'exiting';
+        g.speed = g.baseSpeed;
+        return;
+      }
+
       decideGhost( game, g );
 
-      if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) {
+      if ( !canMove( grid, g.x, g.y, g.dir, actor ) ) {
         break;
       }
     } else {
       g.x += d.x * remaining;
       g.y += d.y * remaining;
       wrapTunnel( g, width );
+
+      if ( g.state === 'eaten' && g.y >= 14 && g.x >= 12 && g.x <= 15 ) {
+        g.y = 14;
+        g.x = Math.round( g.x );
+        g.state = 'exiting';
+        g.speed = g.baseSpeed;
+        return;
+      }
+
       remaining = 0;
     }
   }
 }
 
 function resetPositions( game ) {
+  game.frightenedTimer = 0;
+  game.ghostsEatenStreak = 0;
   const p = game.pacman;
   p.x = PACMAN_START.x;
   p.y = PACMAN_START.y;
@@ -301,6 +352,7 @@ function resetPositions( game ) {
     g.y = start.y;
     g.dir = 'up';
     g.speed = start.speed;
+    g.baseSpeed = start.speed;
     g.state = start.releaseTimer === 0 ? 'exiting' : 'waiting';
     g.timer = start.releaseTimer;
   } );
@@ -311,18 +363,39 @@ function collides( a, b ) {
 }
 
 function update( game ) {
+  if ( game.frightenedTimer > 0 ) {
+    game.frightenedTimer--;
+    if ( game.frightenedTimer === 0 ) {
+      for ( const g of game.ghosts ) {
+        if ( g.state === 'frightened' ) {
+          g.state = 'active';
+          g.speed = g.baseSpeed;
+        }
+      }
+    }
+  }
+
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
   for ( const g of game.ghosts ) {
     if ( collides( game.pacman, g ) ) {
-      game.lives--;
-      if ( game.lives <= 0 ) {
-        game.state = 'lost';
-        return;
+      if ( g.state === 'frightened' ) {
+        game.ghostsEatenStreak++;
+        const points = 200 * Math.pow( 2, game.ghostsEatenStreak - 1 );
+        game.score += points;
+        g.state = 'eaten';
+        g.speed = 0.2;
+        decideGhost( game, g );
+      } else if ( g.state !== 'eaten' ) {
+        game.lives--;
+        if ( game.lives <= 0 ) {
+          game.state = 'lost';
+          return;
+        }
+        resetPositions( game );
+        break;
       }
-      resetPositions( game );
-      break;
     }
   }
 
